@@ -1,6 +1,13 @@
-# MNT Transformer
+# NMT Transformer
+This repository is my attempt at a reproduction of the original [Attention is All You Need](https://arxiv.org/abs/1706.03762) paper by Vaswani et al., 2017. Scripts are provided to perform end-to-end preprocessing, training, inference translation, BLEU scoring, and attention visualization.
+
+Currently, this is a work in progress, so expect sharp edges and unimplemented portions of the paper. Please check the changelog below for more information on the current state of the project.
 
 # Requirements
+* [SentencePiece](https://github.com/google/sentencepiece) for training tokenizers.
+* PyTorch v1.x.
+* NVIDIA Apex for FP16 training.
+* NVIDIA GPU (all experiments were run on NVIDIA Tesla V100 GPUs)
 
 # Data Processing
 
@@ -14,11 +21,15 @@ wget https://nlp.stanford.edu/projects/nmt/data/wmt14.en-de/newstest2013.en
 wget https://nlp.stanford.edu/projects/nmt/data/wmt14.en-de/newstest2013.de
 ```
 
-We build [SentencePiece](https://github.com/google/sentencepiece) tokenizers using our training corpus as follows:
+We build SentencePiece tokenizers using our training corpus as follows:
 
 ```
 spm_train --input=train.en --model_prefix=wmt14en --vocab_size=32000 --character_coverage=1.0 --model_type=bpe --pad_id=3
 spm_train --input=train.de --model_prefix=wmt14de --vocab_size=32000 --character_coverage=1.0 --model_type=bpe --pad_id=3
+
+mkdir tokenizers
+mv wmt14en.model tokenizers/wmt14en.model && mv wmt14en.vocab tokenizers/wmt14en.vocab
+mv wmt14de.model tokenizers/wmt14de.model && mv wmt14de.vocab tokenizers/wmt14de.vocab
 ```
 
 Encode the input files using the generated sentencepiece models:
@@ -33,7 +44,7 @@ spm_encode --model=wmt14de.model --extra_options=bos:eos --output_format=piece <
 
 Encoding takes about 18 minutes to fully finish.
 
-Next, we need to stream the dataset, converting each line of example into its own file. We do this to lazily load the data via PyTorch later to save space.
+Next, we need to stream the dataset, converting each line of example into its own file. We do this to lazily load the data via PyTorch dataloaders later to save space.
 
 ```
 python nmt-transformer/preprocess.py \
@@ -44,7 +55,11 @@ python nmt-transformer/preprocess.py \
     --path dataset
 ```
 
+After this is done, we can now begin training.
+
 # Model Training
+
+To train a Transformer MT model, we use to following command:
 
 ```
 python nmt-transformer/main.py \
@@ -70,3 +85,27 @@ python nmt-transformer/main.py \
     --clip 1.0 \
     --seed 1111
 ```
+
+For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. Enabling this for the training script only requires adding the following flags:
+
+```
+    --fp16 \
+    --opt_level O1
+```
+
+# Results and Reproduction Milestones
+
+# Changelog
+**December 15, 2020**
+- [x] Added initial training scripts
+- [x] Added support for FP16 training via Apex
+- [x] Switched dataloading to custom dataloaders to save RAM
+- [x] Added model checkpointing
+
+**December 13, 2020**
+- [x] Initial commit.
+- [x] Added preprocessing instructions for SentencePiece tokenizer training.
+- [x] Tested maximum data chunk sizes that RAM and GPU can handle.
+
+# Contributing
+If you see any bugs or have any questions, do drop by the Issues tab! Contributions and pull requests are welcome as well.
