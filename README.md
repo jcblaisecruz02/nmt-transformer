@@ -24,33 +24,49 @@ spm_train --input=train.de --model_prefix=wmt14de --vocab_size=32000 --character
 Encode the input files using the generated sentencepiece models:
 
 ```
-spm_encode --model=wmt14en.model --extra_options=bos:eos --output_format=piece < train.en > train_tokenized.en
-spm_encode --model=wmt14de.model --extra_options=bos:eos --output_format=piece < train.de > train_tokenized.de
-spm_encode --model=wmt14en.model --extra_options=bos:eos --output_format=piece < newstest2013.en > test_tokenized.en
-spm_encode --model=wmt14de.model --extra_options=bos:eos --output_format=piece < newstest2013.de > test_tokenized.de
+mkdir data
+spm_encode --model=wmt14en.model --extra_options=bos:eos --output_format=piece < train.en > data/train_tokenized.en
+spm_encode --model=wmt14de.model --extra_options=bos:eos --output_format=piece < train.de > data/train_tokenized.de
+spm_encode --model=wmt14en.model --extra_options=bos:eos --output_format=piece < newstest2013.en > data/test_tokenized.en
+spm_encode --model=wmt14de.model --extra_options=bos:eos --output_format=piece < newstest2013.de > data/test_tokenized.de
 ```
 
 Encoding takes about 18 minutes to fully finish.
 
-Next, we need to stream the dataset, converting each line of example into its own file. We do this to lazily load the data to save space.
+Next, we need to stream the dataset, converting each line of example into its own file. We do this to lazily load the data via PyTorch later to save space.
 
 ```
 python nmt-transformer/preprocess.py \
-    --src_test dataset/test_tokenized.en \
-    --trg_test dataset/test_tokenized.de \
-    --path data
+    --src_train data/train_tokenized.en \
+    --trg_train data/train_tokenized.de \
+    --src_test data/test_tokenized.en \
+    --trg_test data/test_tokenized.de \
+    --path dataset
 ```
 
 # Model Training
 
 ```
 python nmt-transformer/main.py \
+    --save_dir trained_model \
+    --do_train \
     --do_test \
-    --test_dir data/test \
+    --train_dir dataset/train \
+    --valid_dir dataset/test \
+    --test_dir dataset/test \
     --src_vocab tokenizers/wmt14en.vocab \
     --trg_vocab tokenizers/wmt14de.vocab \
-    --src_msl 45 \
-    --trg_msl 55 \
-    --batch_size=128 \
-    --num_workers=1
+    --src_msl 150 \
+    --trg_msl 150 \
+    --hidden_dim 256 \
+    --n_layers 3 \
+    --n_heads 8 \
+    --pf_dim 512 \
+    --dropout 0.1 \
+    --batch_size 128 \
+    --num_workers 4 \
+    --epochs 10 \
+    --learning_rate 3e-4 \
+    --clip 1.0 \
+    --seed 1111
 ```

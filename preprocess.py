@@ -1,5 +1,6 @@
 import os
 import argparse
+from tqdm import tqdm
 
 def write_files(path, src, trg):
     with open(src, 'r') as f:
@@ -8,7 +9,7 @@ def write_files(path, src, trg):
         trg_text = [l.strip() for l in f]
         
     os.mkdir(path)
-    for i in range(0, len(src_text)):
+    for i in tqdm(range(0, len(src_text))):
         with open(path + '/{}.txt'.format(i), 'w') as f:
             f.write(src_text[i] + '\n' + trg_text[i] + '\n')
 
