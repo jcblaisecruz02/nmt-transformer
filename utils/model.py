@@ -7,7 +7,7 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 class MultiheadAttentionLayer(nn.Module):
-    def __init__(self, hidden_dim, n_heads, dropout=0.5):
+    def __init__(self, hidden_dim, n_heads, dropout=0.5, fp16=False):
         super(MultiheadAttentionLayer, self).__init__()
         self.fc_q = nn.Linear(hidden_dim, hidden_dim)
         self.fc_k = nn.Linear(hidden_dim, hidden_dim)
@@ -20,6 +20,8 @@ class MultiheadAttentionLayer(nn.Module):
         self.head_dim = hidden_dim // n_heads
         self.scale = np.sqrt(self.head_dim)
 
+        self.mask_fill = -65504 if fp16 else -1e10
+
     def forward(self, query, key, value, mask=None):
         bs = query.shape[0]
         Q = self.fc_q(query).view(bs, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
@@ -27,7 +29,7 @@ class MultiheadAttentionLayer(nn.Module):
         V = self.fc_v(value).view(bs, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
 
         energy = torch.matmul(Q, K.permute(0, 1, 3, 2)) / self.scale
-        if mask is not None: energy = energy.masked_fill(mask==0, -1e10)
+        if mask is not None: energy = energy.masked_fill(mask==0, self.mask_fill)
 
         attention = torch.softmax(energy, dim=-1)
         x = torch.matmul(self.dropout(attention), V)
@@ -49,11 +51,11 @@ class PositionFeedForward(nn.Module):
         return out
     
 class EncoderLayer(nn.Module):
-    def __init__(self, hidden_dim, n_heads, pf_dim, dropout=0.5):
+    def __init__(self, hidden_dim, n_heads, pf_dim, dropout=0.5, fp16=False):
         super(EncoderLayer, self).__init__()
         self.at_layer_norm = nn.LayerNorm(hidden_dim)
         self.ff_layer_norm = nn.LayerNorm(hidden_dim)
-        self.attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout=dropout)
+        self.attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout=dropout, fp16=fp16)
         self.positionwise_ff = PositionFeedForward(hidden_dim, pf_dim, dropout)
         self.dropout = nn.Dropout(dropout)
 
@@ -65,11 +67,11 @@ class EncoderLayer(nn.Module):
         return out
     
 class Encoder(nn.Module):
-    def __init__(self, vocab_sz, hidden_dim, n_layers, n_heads, pf_dim, dropout=0.5, msl=100):
+    def __init__(self, vocab_sz, hidden_dim, n_layers, n_heads, pf_dim, dropout=0.5, msl=100, fp16=False):
         super(Encoder, self).__init__()
         self.token_embedding = nn.Embedding(vocab_sz, hidden_dim)
         self.posit_embedding = nn.Embedding(msl, hidden_dim)
-        layers = [EncoderLayer(hidden_dim, n_heads, pf_dim, dropout) for _ in range(n_layers)]
+        layers = [EncoderLayer(hidden_dim, n_heads, pf_dim, dropout, fp16=fp16) for _ in range(n_layers)]
         self.layers = nn.ModuleList(layers)
         self.dropout = nn.Dropout(dropout)
         self.scale = np.sqrt(hidden_dim)
@@ -85,13 +87,13 @@ class Encoder(nn.Module):
         return out
     
 class DecoderLayer(nn.Module):
-    def __init__(self, hidden_dim, n_heads, pf_dim, dropout=0.5):
+    def __init__(self, hidden_dim, n_heads, pf_dim, dropout=0.5, fp16=False):
         super(DecoderLayer, self).__init__()
         self.self_at_layer_norm = nn.LayerNorm(hidden_dim)
         self.ff_layer_norm = nn.LayerNorm(hidden_dim)
         self.enco_at_layer_norm = nn.LayerNorm(hidden_dim)
-        self.self_attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout)
-        self.enco_attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout)
+        self.self_attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout, fp16=fp16)
+        self.enco_attention = MultiheadAttentionLayer(hidden_dim, n_heads, dropout, fp16=fp16)
         self.positionwise_ff = PositionFeedForward(hidden_dim, pf_dim, dropout)
         self.dropout = nn.Dropout(dropout)
 
@@ -105,11 +107,11 @@ class DecoderLayer(nn.Module):
         return out, attention
     
 class Decoder(nn.Module):
-    def __init__(self, vocab_sz, hidden_dim, n_layers, n_heads, pf_dim, dropout, msl=100):
+    def __init__(self, vocab_sz, hidden_dim, n_layers, n_heads, pf_dim, dropout, msl=100, fp16=False):
         super(Decoder, self).__init__()
         self.token_embedding = nn.Embedding(vocab_sz, hidden_dim)
         self.posit_embedding = nn.Embedding(msl, hidden_dim)
-        layers = [DecoderLayer(hidden_dim, n_heads, pf_dim, dropout) for _ in range(n_layers)]
+        layers = [DecoderLayer(hidden_dim, n_heads, pf_dim, dropout, fp16=fp16) for _ in range(n_layers)]
         self.layers = nn.ModuleList(layers)
         self.fc1 = nn.Linear(hidden_dim, vocab_sz)
         self.dropout = nn.Dropout(dropout)

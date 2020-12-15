@@ -11,7 +11,13 @@ import argparse
 from utils.data import TextDataset, collate_fn
 from utils.model import Encoder, Decoder, Seq2Seq, count_parameters
 
-def train(model, criterion, optimizer, train_loader, device=None, clip=0.0, scheduler=None):
+try:
+    from apex import amp 
+    APEX_AVAILABLE = True 
+except ModuleNotFoundError:
+    APEX_AVAILABLE = False
+
+def train(model, criterion, optimizer, train_loader, device=None, clip=0.0, scheduler=None, fp16=False):
     train_loss = 0
     model.train()
     for x, y in tqdm(train_loader):
@@ -22,8 +28,15 @@ def train(model, criterion, optimizer, train_loader, device=None, clip=0.0, sche
                         y[:, 1:].contiguous().flatten(0))
                 
         optimizer.zero_grad()
-        loss.backward()
-        nn.utils.clip_grad_norm_(model.parameters(), clip)
+
+        if fp16 and APEX_AVAILABLE:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward() 
+                nn.utils.clip_grad_norm_(amp.master_params(optimizer), clip)
+        else: 
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), clip)
+
         optimizer.step()
         if scheduler is not None: scheduler.step()
 
@@ -72,6 +85,8 @@ def main():
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_test', action='store_true')
     parser.add_argument('--no_cuda', action='store_true')
+    parser.add_argument('--fp16', action='store_true')
+    parser.add_argument('--opt_level', type=str, default='O1')
 
     parser.add_argument('--seed', type=int, default=1111)
     
@@ -102,12 +117,30 @@ def main():
         print("Training batches: {}\nValidation batches: {}".format(len(train_loader), len(valid_loader)))
 
         # Produce training setup
-        encoder = Encoder(vocab_sz=train_dataset.src_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout, msl=args.src_msl)
-        decoder = Decoder(vocab_sz=train_dataset.trg_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout, msl=args.trg_msl)
+        encoder = Encoder(vocab_sz=train_dataset.src_vocab_sz, 
+                          hidden_dim=args.hidden_dim, 
+                          n_layers=args.n_layers, 
+                          n_heads=args.n_heads, 
+                          pf_dim=args.pf_dim, 
+                          dropout=args.dropout, 
+                          msl=args.src_msl, 
+                          fp16=args.fp16)
+        decoder = Decoder(vocab_sz=train_dataset.trg_vocab_sz, 
+                          hidden_dim=args.hidden_dim, 
+                          n_layers=args.n_layers, 
+                          n_heads=args.n_heads, 
+                          pf_dim=args.pf_dim, 
+                          dropout=args.dropout, 
+                          msl=args.trg_msl, 
+                          fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx['<pad>'], train_dataset.trg_word2idx['<pad>']).to(device)
 
         criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx['<pad>'])
         optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+
+        if args.fp16 and APEX_AVAILABLE:
+            model, optimizer = amp.initialize(model, optimizer, opt_level=args.opt_level)
+
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * args.epochs)
 
         print("Model has {:,} trainable parameters.".format(count_parameters(model)))
@@ -115,7 +148,7 @@ def main():
         # Train Model
         print("Beginning Training.")
         for e in range(1, args.epochs + 1):
-            train_loss = train(model, criterion, optimizer, train_loader, device=device, clip=args.clip, scheduler=scheduler)
+            train_loss = train(model, criterion, optimizer, train_loader, device=device, clip=args.clip, scheduler=scheduler, fp16=args.fp16)
             valid_loss = evaluate(model, criterion, valid_loader, device=device)
             print("Epoch {:3} | Train Loss {:.4f} | Train Ppl {:.4f} | Valid Loss {:.4f} | Valid Ppl {:.4f}".format(e, train_loss, np.exp(train_loss), valid_loss, np.exp(valid_loss)))
 
@@ -150,8 +183,22 @@ def main():
         with open(args.save_dir + '/settings.bin', 'rb') as f:
             hd, nl, nh, pf, dp, smsl, tmsl = torch.load(f)
         print(test_dataset.src_vocab_sz)
-        encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp, msl=smsl)
-        decoder = Decoder(vocab_sz=test_dataset.trg_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp, msl=tmsl)
+        encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, 
+                          hidden_dim=hd, 
+                          n_layers=nl, 
+                          n_heads=nh, 
+                          pf_dim=pf, 
+                          dropout=dp, 
+                          msl=smsl, 
+                          fp16=args.fp16)
+        decoder = Decoder(vocab_sz=test_dataset.trg_vocab_sz, 
+                          hidden_dim=hd, 
+                          n_layers=nl, 
+                          n_heads=nh, 
+                          pf_dim=pf, 
+                          dropout=dp, 
+                          msl=tmsl, 
+                          fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx['<pad>'], test_dataset.trg_word2idx['<pad>'])
 
         with open(args.save_dir + '/model.bin', 'rb') as f:
