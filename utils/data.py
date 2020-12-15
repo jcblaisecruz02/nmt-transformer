@@ -1,9 +1,9 @@
 import torch
 import os
 
-def pad_and_truncate(s, word2idx, msl, pad_token='<pad>'):
+def pad_and_truncate(s, word2idx, msl, vocab, pad_token='<pad>'):
     '''Takes an unsplit pretokenized sentence and indexes it'''
-    s = [word2idx[token] for token in s.split()][:msl]
+    s = [word2idx[token if token in vocab else '<unk>'] for token in s.split()][:msl]
     if len(s) < msl:
         s += [word2idx[pad_token] for _ in range(msl - len(s))]
     return s
@@ -38,12 +38,14 @@ class TextDataset(torch.utils.data.Dataset):
             
         self.src_vocab_sz = len(self.src_idx2word)
         self.trg_vocab_sz = len(self.trg_idx2word)
+        self.src_vocab = set(self.src_idx2word)
+        self.trg_vocab = set(self.trg_idx2word)
     
     def __getitem__(self, idx):
         with open(self.datadir + '/' + '{}.txt'.format(idx), 'r') as f:
             src, trg = [l.strip() for l in f]
-        src = pad_and_truncate(src, self.src_word2idx, self.src_msl)
-        trg = pad_and_truncate(trg, self.trg_word2idx, self.trg_msl)
+        src = pad_and_truncate(src, self.src_word2idx, self.src_msl, self.src_vocab)
+        trg = pad_and_truncate(trg, self.trg_word2idx, self.trg_msl, self.trg_vocab)
         return src, trg
     
     def __len__(self):

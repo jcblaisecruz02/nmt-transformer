@@ -71,6 +71,7 @@ def main():
     
     parser.add_argument('--do_train', action='store_true')
     parser.add_argument('--do_test', action='store_true')
+    parser.add_argument('--no_cuda', action='store_true')
 
     parser.add_argument('--seed', type=int, default=1111)
     
@@ -78,7 +79,7 @@ def main():
     print(args)
 
     torch.manual_seed(args.seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda' if torch.cuda.is_available() and not args.no_cuda else 'cpu')
     
     if args.do_train:
         # Produce dataloaders
@@ -101,8 +102,8 @@ def main():
         print("Training batches: {}\nValidation batches: {}".format(len(train_loader), len(valid_loader)))
 
         # Produce training setup
-        encoder = Encoder(vocab_sz=train_dataset.src_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout)
-        decoder = Decoder(vocab_sz=train_dataset.trg_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout)
+        encoder = Encoder(vocab_sz=train_dataset.src_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout, msl=args.src_msl)
+        decoder = Decoder(vocab_sz=train_dataset.trg_vocab_sz, hidden_dim=args.hidden_dim, n_layers=args.n_layers, n_heads=args.n_heads, pf_dim=args.pf_dim, dropout=args.dropout, msl=args.trg_msl)
         model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx['<pad>'], train_dataset.trg_word2idx['<pad>']).to(device)
 
         criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx['<pad>'])
@@ -128,7 +129,7 @@ def main():
         with open(args.save_dir + '/model.bin', 'wb') as f:
             torch.save(model.state_dict(), f)
         with open(args.save_dir + '/settings.bin', 'wb') as f:
-            torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout], f)
+            torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout, args.src_msl, args.trg_msl], f)
 
         print("Training done!\n")
 
@@ -147,17 +148,17 @@ def main():
         # Produce setup
         print("Loading model and saved settings.")
         with open(args.save_dir + '/settings.bin', 'rb') as f:
-            hd, nl, nh, pf, dp = torch.load(f)
-
-        encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp)
-        decoder = Decoder(vocab_sz=test_dataset.trg_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp)
-        model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx['<pad>'], train_dataset.trg_word2idx['<pad>'])
+            hd, nl, nh, pf, dp, smsl, tmsl = torch.load(f)
+        print(test_dataset.src_vocab_sz)
+        encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp, msl=smsl)
+        decoder = Decoder(vocab_sz=test_dataset.trg_vocab_sz, hidden_dim=hd, n_layers=nl, n_heads=nh, pf_dim=pf, dropout=dp, msl=tmsl)
+        model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx['<pad>'], test_dataset.trg_word2idx['<pad>'])
 
         with open(args.save_dir + '/model.bin', 'rb') as f:
             model.load_state_dict(torch.load(f))
         model = model.to(device)
 
-        criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx['<pad>'])
+        criterion = nn.CrossEntropyLoss(ignore_index=test_dataset.src_word2idx['<pad>'])
         
         print("Begin testing.")
         test_loss = evaluate(model, criterion, test_loader, device=device)
