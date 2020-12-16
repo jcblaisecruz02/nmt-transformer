@@ -141,9 +141,12 @@ class Seq2Seq(nn.Module):
             encoder.token_embedding.weight = decoder.token_embedding.weight
             decoder.fc1.weight = decoder.token_embedding.weight
 
+        self.init_weights()
+
     def init_weights(self):
-        for name, param in self.named_parameters():
-            if 'weight' in name: nn.init.xavier_uniform_(param.data)
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
 
     def make_src_mask(self, x):
         mask = (x != self.src_pad_ix).unsqueeze(1).unsqueeze(2)
