@@ -7,7 +7,9 @@ Currently, this is a work in progress, so expect sharp edges and unimplemented p
 * [SentencePiece](https://github.com/google/sentencepiece) for training tokenizers.
 * PyTorch v1.x.
 * NVIDIA Apex for FP16 training.
-* NVIDIA GPU (all experiments were run on NVIDIA Tesla V100 GPUs)
+* NVIDIA GPU (all experiments were run on NVIDIA Tesla V100 GPUs).
+* [PyTorch LAMB](https://github.com/cybertronai/pytorch-lamb) (Optional) for LAMB optimizer.
+* [HuggingFace Transformers](https://huggingface.co/transformers/index.html) (Optional) for AdamW and linear warmup scheduler.
 
 # Data Processing
 
@@ -59,32 +61,37 @@ After this is done, we can now begin training.
 
 # Model Training
 
-To train a Transformer MT model, we use to following command:
+To train a Transformer MT model, we use the following command:
 
 ```
 python nmt-transformer/main.py \
     --save_dir trained_model \
-    --do_train \
     --do_test \
+    --do_train \
     --train_dir dataset/train \
     --valid_dir dataset/test \
     --test_dir dataset/test \
     --src_vocab tokenizers/wmt14en.vocab \
     --trg_vocab tokenizers/wmt14de.vocab \
-    --src_msl 150 \
-    --trg_msl 150 \
+    --num_workers 4 \
+    --src_msl 100 \
+    --trg_msl 100 \
     --hidden_dim 256 \
     --n_layers 3 \
     --n_heads 8 \
     --pf_dim 512 \
     --dropout 0.1 \
-    --batch_size 128 \
-    --num_workers 4 \
-    --epochs 10 \
-    --learning_rate 3e-4 \
+    --optimizer adamw \
+    --learning_rate 1e-2 \
+    --weight_decay 0.0 \
+    --scheduler linear \
+    --warmup_pct 0.1 \
     --clip 1.0 \
+    --batch_size 128 \
+    --epochs 10 \
     --seed 1111
 ```
+This uses the `AdamW` optimizer and `get_linear_schedule_with_warmup` scheduler from HuggingFace Transformers. The script will use `torch.optim.Adam` as its default optimizer, and will not use a scheduler by default. The script will save checkpoints in the directory passed to `--save_dir`. Training can be resumed from the checkpoint by using the `--resume_training` flag.
 
 For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. Enabling this for the training script only requires adding the following flags:
 
@@ -94,8 +101,16 @@ For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. E
 ```
 
 # Results and Reproduction Milestones
+*TBA*
 
 # Changelog
+**December 16, 2020**
+- [x] Added `AdamW` and `LAMB` optimizers.
+- [x] Added linear warmup scheduler.
+- [x] Added full support for checkpointing and training resuming.
+- [x] Refactored code for training loops.
+- [x] Added diagnostics reporting during training.
+
 **December 15, 2020**
 - [x] Added initial training scripts
 - [x] Added support for FP16 training via Apex
