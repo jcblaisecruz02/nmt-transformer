@@ -130,12 +130,16 @@ class Decoder(nn.Module):
         return out, attention
     
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder, decoder, src_pad_ix, trg_pad_ix):
+    def __init__(self, encoder, decoder, src_pad_ix, trg_pad_ix, tie_weights=False):
         super(Seq2Seq, self).__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.src_pad_ix = src_pad_ix
         self.trg_pad_ix = trg_pad_ix
+
+        if tie_weights:
+            encoder.token_embedding.weight = decoder.token_embedding.weight
+            decoder.fc1.weight = decoder.token_embedding.weight
 
     def init_weights(self):
         for name, param in self.named_parameters():

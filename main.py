@@ -29,6 +29,7 @@ def main():
     parser.add_argument('--save_dir', type=str, help='Directory to save checkpoints and load checkpoints from')
 
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs to train')
+    parser.add_argument('--tie_weights', action='store_true', help='Tie weights of encoder/decoder embeddings and projection layer')
     parser.add_argument('--hidden_dim', type=int, default=256, help='Hidden dimensions of the transformer layers')
     parser.add_argument('--n_layers', type=int, default=3, help='Number of transformer blocks in the encoder and decoder')
     parser.add_argument('--n_heads', type=int, default=8, help='Number of attention heads')
@@ -39,7 +40,7 @@ def main():
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamw', 'lamb'], help='Optimizer to use')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay for non LayerNorm and Bias layers')
-    parser.add_argument('--adam_epsilon', type=float, default=1e-8, help='Epsilon value for Adam')
+    parser.add_argument('--adam_epsilon', type=float, default=1e-9, help='Epsilon value for Adam')
     parser.add_argument('--adam_b1', type=float, default=0.9, help='Beta1 for LAMB')
     parser.add_argument('--adam_b2', type=float, default=0.99, help='Beta2 for LAMB')
     parser.add_argument('--scheduler', type=str, default=None, choices=['cosine', 'linear', None], help='Scheduler to use')
@@ -100,7 +101,7 @@ def main():
                           dropout=args.dropout, 
                           msl=args.trg_msl, 
                           fp16=args.fp16)
-        model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx[args.pad_token], train_dataset.trg_word2idx[args.pad_token]).to(device)
+        model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx[args.pad_token], train_dataset.trg_word2idx[args.pad_token], tie_weights=args.tie_weights).to(device)
         criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
 
         # Produce Optimizer
@@ -113,19 +114,19 @@ def main():
         if args.optimizer == 'adamw':
             try:
                 from transformers import AdamW
-                optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, betas=(args.adam_b1, args.adam_b2))
             except ModuleNotFoundError:
                 print("Transformers module not found for AdamW. Using generic Adam instead.")
-                optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, betas=(args.adam_b1, args.adam_b2))
         elif args.optimizer == 'lamb':
             try:
                 from pytorch_lamb import Lamb
                 optimizer = Lamb(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay, betas=(args.adam_b1, args.adam_b2))
             except ModuleNotFoundError:
                 print("LAMB implementation not found. Using generic Adam instead.")
-                optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+                optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, betas=(args.adam_b1, args.adam_b2))
         elif args.optimizer == 'adam':
-            optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+            optimizer = optim.Adam(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon, betas=(args.adam_b1, args.adam_b2))
 
         # Configure FP16
         if args.fp16 and APEX_AVAILABLE:
@@ -204,7 +205,7 @@ def main():
         # Produce setup
         print("Loading model and saved settings.")
         with open(args.save_dir + '/settings.bin', 'rb') as f:
-            hd, nl, nh, pf, dp, smsl, tmsl = torch.load(f)
+            hd, nl, nh, pf, dp, smsl, tmsl, tw = torch.load(f)
 
         encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, 
                           hidden_dim=hd, 
@@ -222,7 +223,7 @@ def main():
                           dropout=dp, 
                           msl=tmsl, 
                           fp16=args.fp16)
-        model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx[args.pad_token], test_dataset.trg_word2idx[args.pad_token])
+        model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx[args.pad_token], test_dataset.trg_word2idx[args.pad_token], tie_weights=tw)
         criterion = nn.CrossEntropyLoss(ignore_index=test_dataset.src_word2idx[args.pad_token])
 
         # Load the checkpoint

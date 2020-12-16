@@ -66,7 +66,7 @@ def save_checkpoint(model, args, optimizer=None, e=None, scheduler=None, save_st
     with open(args.save_dir + '/model.bin', 'wb') as f:
         torch.save(model.state_dict(), f)
     with open(args.save_dir + '/settings.bin', 'wb') as f:
-        torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout, args.src_msl, args.trg_msl], f)
+        torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout, args.src_msl, args.trg_msl, args.tie_weights], f)
     
     # Save the optimizer state for training
     if save_state and optimizer is not None:
