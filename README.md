@@ -111,10 +111,61 @@ For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. E
     --opt_level O1
 ```
 
+# Producing Translations
+There are two translation modes: single sentence translation, and file translation.
+
+To translate a single unsegmented, untokenized sentence from the source to the target language, the following command may be used:
+
+```
+python nmt-transformer/translate.py \
+    --translate_sentence \
+    --sentence "Republican leaders justified their policy by the need to combat electoral fraud ." \
+    --src_vocab tokenizers/wmt14en.vocab \
+    --joint_vocab tokenizers/wmt14joint.vocab \
+    --spm_model tokenizers/wmt14joint.model \
+    --save_dir transformer_base_modelc \
+    --desegment \
+    --msl 100 \
+    --max_words 20 \
+    --seed 42
+```
+
+This should give the following output:
+
+```
+Translation: Die republikanischen Führer haben ihre Politik durch die Notwendigkeit der Bekämpfung von Wahlbetrug gerechtfertigt .
+```
+
+The script takes care tokenization, segmentation, translation, and desegmentation. There is no need for preprocessing to translate a single sentence via the provided script.
+
+We can also translate an entire file (say, for producing translations of the test set). This assumes that the input test file has already been segmented via SentencePiece. To produce translations this way, the following command may be used:
+
+```
+python nmt-transformer/translate.py \
+    --translate_file \
+    --src_file tokenized_wmt14/test_tokenized.en \
+    --output_file output.txt \
+    --src_vocab tokenizers/wmt14en.vocab \
+    --joint_vocab tokenizers/wmt14joint.vocab \
+    --spm_model tokenizers/wmt14joint.model \
+    --save_dir transformer_base_modelc \
+    --desegment \
+    --msl 100 \
+    --max_words 100 \
+    --seed 42 \
+    --use_cuda
+```
+
+This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. If your input file has not been segmented by SentencePiece yet, remove the `--desegment` toggle from the command line arguments (do note that this will increase the translation time by 3x). We highly encourage the use of `--use_cuda` during translation to speed up the process.
+
 # Results and Reproduction Milestones
 *TBA*
 
 # Changelog
+**December 17, 2020**
+- [x] Added translation scripts and modes
+- [x] Added support for auto de/segmentation in the utilities
+
 **December 16, 2020**
 - [x] Added `AdamW` and `LAMB` optimizers.
 - [x] Added linear warmup scheduler.
