@@ -66,7 +66,7 @@ Once this is done, we can now proceed to training the model.
 
 # Model Training
 
-Training an NMT model is straightforward. This trains the smallest model (Model C, 30M parameters) reported on the Transformer paper for the WMT German-English translation task (N=2, d_model=512, pf_dim=2048, h=8, dropout=0.1):
+Training an NMT model is straightforward. This trains using the smallest model configuration (Model C, 30M parameters) reported on the Transformer paper for the WMT German-English translation task (N=2, d_model=512, pf_dim=2048, h=8, dropout=0.1):
 
 ```
 python nmt-transformer/main.py \
@@ -88,7 +88,7 @@ python nmt-transformer/main.py \
     --pf_dim 2048 \
     --dropout 0.1 \
     --optimizer adamw \
-    --learning_rate 4.4e-2 \
+    --learning_rate 1e-3 \
     --adam_epsilon 1e-9 \
     --adam_b1 0.9 \
     --adam_b2 0.98 \
@@ -100,6 +100,13 @@ python nmt-transformer/main.py \
     --epochs 3 \
     --seed 1111
 ```
+
+This setup should give you the following results:
+
+```
+Test Loss 2.0481 | Test Ppl 7.7532
+```
+
 This uses the `AdamW` optimizer and `get_linear_schedule_with_warmup` scheduler from HuggingFace Transformers. The script will use `torch.optim.Adam` as its default optimizer, and will not use a scheduler by default. The script will save checkpoints in the directory passed to `--save_dir`. Training can be resumed from the checkpoint by using the `--resume_training` flag.
 
 We use the same `--src_vocab` and `--trg_vocab` (`tokenizers/wmt14joint.vocab`) since we are using `--tie_weights` as directed in the paper. If you do not wish to tie the encoder/decoder embedding weights and the projection layer weights, you can opt to use language-specific BPE vocabularies instead (such as `tokenizers/wmt14en.vocab` and `tokenizers/wmt14de.vocab`). This, however, will result in a much larger model size and slower training time.
@@ -110,6 +117,8 @@ For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. E
     --fp16 \
     --opt_level O1
 ```
+
+For more information on reproduction scores and setups, see [Results and Reproduction Milestones](https://github.com/jcblaisecruz02/nmt-transformer#results-and-reproduction-milestones) below.
 
 # Producing Translations
 There are two translation modes: single sentence translation, and file translation.
@@ -158,13 +167,28 @@ python nmt-transformer/translate.py \
 
 This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. If your input file has not been segmented by SentencePiece yet, remove the `--desegment` toggle from the command line arguments (do note that this will increase the translation time by 3x). We highly encourage the use of `--use_cuda` during translation to speed up the process.
 
+To get a BLEU score for the translated corpus, use the following provided script:
+
+```
+python nmt-transformer/bleu.py \
+    --translation_file output.txt \
+    --reference_file wmt14/newstest2013.de
+```
+
+If you're using a translation from the checkpoint produced by the example above, you should get the following output:
+
+```
+BLEU: 20.08
+```
+
 # Results and Reproduction Milestones
 *TBA*
 
 # Changelog
 **December 17, 2020**
-- [x] Added translation scripts and modes
-- [x] Added support for auto de/segmentation in the utilities
+- [x] Added translation scripts and modes.
+- [x] Added support for auto de/segmentation in the utilities.
+- [x] Added BLEU scoring.
 
 **December 16, 2020**
 - [x] Added `AdamW` and `LAMB` optimizers.
