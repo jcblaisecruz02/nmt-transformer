@@ -1,19 +1,41 @@
 import torch
 import os
+import subprocess
+
+def segment(s, spm_model, spm_vocab):
+    '''Converts a sentence into segmented wordpieces. Uses split vocab.'''
+    cmd = 'echo "{}" | spm_encode --model={} --vocabulary={} --extra_options=bos:eos --output_format=piece'.format(s, spm_model, spm_vocab)
+    res = subprocess.check_output(cmd, shell=True, encoding='utf-8').strip()
+    return res
+
+def unsegment(s, spm_model):
+    '''Converts a sentence into segmented wordpieces'''
+    cmd = 'echo "{}" | spm_decode --model={} --input_format=piece'.format(s, spm_model)
+    res = subprocess.check_output(cmd, shell=True, encoding='utf-8').strip()
+    return res
 
 def pad_and_truncate(s, word2idx, msl, vocab, pad_token='<pad>'):
-    '''Takes an unsplit pretokenized sentence and indexes it'''
+    '''Takes an unsplit pretokenized sentence and indexes it. Uses joint vocab.'''
     s = [word2idx[token if token in vocab else '<unk>'] for token in s.split()][:msl]
     if len(s) < msl:
         s += [word2idx[pad_token] for _ in range(msl - len(s))]
     return s
 
 def detokenize(tokens, idx2word, word2idx, pad_token='<pad>'):
+    '''Takes an indexed sequence and converts them back to segmented wordpieces. Uses joint vocab.'''
     pad_idx = word2idx[pad_token]
     if type(tokens) is torch.Tensor:
         tokens = list(tokens.cpu().numpy())
     tokens = tokens[:tokens.index(pad_idx)]
     return ' '.join([idx2word[idx] for idx in tokens])
+
+def produce_vocabulary(spm_vocab):
+    with open(spm_vocab, 'r') as f:
+        idx2word = [l.strip().split()[0] for l in f]
+        word2idx = {idx2word[i]: i for i in range(len(idx2word))}
+        vocab = set(idx2word)
+        vocab_sz = len(vocab)
+    return idx2word, word2idx, vocab, vocab_sz
 
 def collate_fn(batch):
     srcs, trgs = [], []
