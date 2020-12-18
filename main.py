@@ -121,7 +121,7 @@ def main():
         if args.criterion == 'cross_entropy':
             criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
         elif args.criterion == 'label_smoothing':
-            criterion = LabelSmoothingLoss(train_dataset.trg_vocab_sz, smoothing=args.smoothing)
+            criterion = LabelSmoothingLoss(epsilon=args.smoothing)
 
         # Produce Optimizer
         no_decay = ["bias", "LayerNorm.weight"]
@@ -280,7 +280,7 @@ def main():
         if cri == 'cross_entropy':
             criterion = nn.CrossEntropyLoss(ignore_index=test_dataset.trg_word2idx[args.pad_token])
         elif cri == 'label_smoothing':
-            criterion = LabelSmoothingLoss(test_dataset.trg_vocab_sz, smoothing=args.smoothing)
+            criterion = LabelSmoothingLoss(epsilon=args.smoothing)
 
         # Load the checkpoint
         if usw:

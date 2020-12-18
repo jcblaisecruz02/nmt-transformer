@@ -9,9 +9,9 @@ def main():
 
     args = parser.parse_args()
 
-    with open('wmt14/newstest2013.de', 'r') as f:
+    with open(args.reference_file, 'r') as f:
         references = [l.strip().split(' ') for l in f]
-    with open('output.txt', 'r') as f:
+    with open(args.translation_file, 'r') as f:
         translations = [l.strip().split(' ') for l in f]
 
     bleu = compute_bleu(references, translations)
