@@ -118,6 +118,18 @@ For speedups, we suggest using NVIDIA Apex for 16-bit floating point training. E
     --opt_level O1
 ```
 
+To use settings indicated in the paper, set the following flags:
+
+```
+    --scheduler noam \
+    --warmup_steps 4000 \
+    --criterion label_smoothing \
+    --smoothing 0.1 \
+    ...
+```
+
+The `--warmup_steps` parameter will override the `--warmup_pct` parameter. Make sure to compute how many batches you are training per epoch to use an appropriate number of warmup steps relative to the number of total steps.
+
 For more information on reproduction scores and setups, see [Results and Reproduction Milestones](https://github.com/jcblaisecruz02/nmt-transformer#results-and-reproduction-milestones) below.
 
 # Producing Translations
@@ -185,6 +197,10 @@ BLEU: 20.08
 *TBA*
 
 # Changelog
+**December 18, 2020**
+- [x] Added Noam scheduling.
+- [x] Added Label Smoothing.
+
 **December 17, 2020**
 - [x] Added translation scripts and modes.
 - [x] Added support for auto de/segmentation in the utilities.

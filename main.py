@@ -8,6 +8,7 @@ import argparse
 from utils.data import TextDataset, collate_fn
 from utils.model import Encoder, Decoder, Seq2Seq, count_parameters
 from utils.train import train, evaluate, save_checkpoint
+from utils.optim import NoamLR, LabelSmoothingLoss
 
 try:
     from apex import amp 
@@ -37,14 +38,17 @@ def main():
     parser.add_argument('--dropout', type=float, default=0.1, help='Dropout probability')
     parser.add_argument('--clip', type=float, default=1.0, help='Gradient clipping')
 
+    parser.add_argument('--criterion', type=str, default='cross_entropy', choices=['cross_entropy', 'label_smoothing'], help='Criterion to use')
+    parser.add_argument('--smoothing', type=float, default=0.0, help='Label smoothing factor')
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamw', 'lamb'], help='Optimizer to use')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='Weight decay for non LayerNorm and Bias layers')
     parser.add_argument('--adam_epsilon', type=float, default=1e-9, help='Epsilon value for Adam')
     parser.add_argument('--adam_b1', type=float, default=0.9, help='Beta1 for LAMB')
     parser.add_argument('--adam_b2', type=float, default=0.99, help='Beta2 for LAMB')
-    parser.add_argument('--scheduler', type=str, default=None, choices=['cosine', 'linear', None], help='Scheduler to use')
+    parser.add_argument('--scheduler', type=str, default=None, choices=['cosine', 'linear', 'noam', None], help='Scheduler to use')
     parser.add_argument('--warmup_pct', type=float, default=0.1, help='Percentage of steps to warmup for linear scheduler')
+    parser.add_argument('--warmup_steps', type=int, default=4000, help='Number of warmup steps for noam scheduling')
     
     parser.add_argument('--do_train', action='store_true', help='Train a model')
     parser.add_argument('--do_test', action='store_true', help='Evaluate a model')
@@ -102,7 +106,12 @@ def main():
                           msl=args.trg_msl, 
                           fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx[args.pad_token], train_dataset.trg_word2idx[args.pad_token], tie_weights=args.tie_weights).to(device)
-        criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
+        
+        # Produce criterion
+        if args.criterion == 'cross_entropy':
+            criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
+        elif args.criterion == 'label_smoothing':
+            criterion = LabelSmoothingLoss(train_dataset.trg_vocab_sz, smoothing=args.smoothing)
 
         # Produce Optimizer
         no_decay = ["bias", "LayerNorm.weight"]
@@ -143,10 +152,13 @@ def main():
             except ModuleNotFoundError:
                 print('Transformers module not found for Linear Schedule. Not using a scheduler instead.')
                 scheduler = None
+        elif args.scheduler == 'noam':
+            scheduler = NoamLR(optimizer, warmup_steps=args.warmup_steps)
         else:
             scheduler = None
 
-        print("\nModel has {:,} trainable parameters.\n".format(count_parameters(model)))
+        print("\nUsing {} optimizer with {} scheduling. Optimizing via {}.".format(str(type(optimizer)), str(type(scheduler)), str(type(criterion))))
+        print("Model has {:,} trainable parameters.\n".format(count_parameters(model)))
 
         # Configure states if resuming from checkpoint
         if args.resume_training:
@@ -224,7 +236,11 @@ def main():
                           msl=tmsl, 
                           fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx[args.pad_token], test_dataset.trg_word2idx[args.pad_token], tie_weights=tw)
-        criterion = nn.CrossEntropyLoss(ignore_index=test_dataset.src_word2idx[args.pad_token])
+
+        if args.criterion == 'cross_entropy':
+            criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
+        elif args.criterion == 'label_smoothing':
+            criterion = LabelSmoothingLoss(train_dataset.trg_vocab_sz, smoothing=args.smoothing)
 
         # Load the checkpoint
         with open(args.save_dir + '/model.bin', 'rb') as f:
