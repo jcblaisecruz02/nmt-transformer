@@ -6,6 +6,7 @@ from utils.translation import translate, translate_one_sentence
 
 import torch
 import torch.nn as nn
+from torch.optim.swa_utils import AveragedModel
 from tqdm import tqdm
 
 def main():
@@ -15,6 +16,7 @@ def main():
     parser.add_argument('--sentence', type=str, help='Sentence to translate')
     parser.add_argument('--src_file', type=str, help='File to translate')
     parser.add_argument('--output_file', type=str, help='File to write translations to')
+    parser.add_argument('--use_swa', action='store_true', help='Use the saved averaged model')
 
     parser.add_argument('--src_vocab', type=str, help='Isolated vocabulary for the source language')
     parser.add_argument('--joint_vocab', type=str, help='Joint vocabulary for both languages')
@@ -40,7 +42,7 @@ def main():
     # Load model and saved settings
     print('Loading model.')
     with open(args.save_dir + '/settings.bin', 'rb') as f:
-        hd, nl, nh, pf, dp, smsl, tmsl, tw = torch.load(f)
+        hd, nl, nh, pf, dp, smsl, tmsl, tw, usw, cri = torch.load(f)
 
     encoder = Encoder(vocab_sz=vocab_sz, 
                       hidden_dim=hd, 
@@ -59,11 +61,17 @@ def main():
                       msl=tmsl, 
                       fp16=False)
     model = Seq2Seq(encoder, decoder, word2idx[args.pad_token], word2idx[args.pad_token], tie_weights=tw)
-    criterion = nn.CrossEntropyLoss(ignore_index=word2idx[args.pad_token])
-
-    # Load the checkpoint
-    with open(args.save_dir + '/model.bin', 'rb') as f:
-        model.load_state_dict(torch.load(f))
+    
+    # Load checkpoint
+    if args.use_swa: 
+        print("Using averaged model.")
+        model = AveragedModel(model)
+        with open(args.save_dir + '/swa_model.bin', 'rb') as f:
+            model.load_state_dict(torch.load(f))
+    else:
+        print("Using saved model.")
+        with open(args.save_dir + '/model.bin', 'rb') as f:
+            model.load_state_dict(torch.load(f))
     model = model.to(device)
     model.eval()
 

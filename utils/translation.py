@@ -9,6 +9,9 @@ def translate(sample, model, idx2word, word2idx, max_words=20, seed=42, device=N
     '''Input has to be a torch longtensor that's segmented, padded, and processed'''
     torch.manual_seed(seed)
 
+    if type(model) is torch.optim.swa_utils.AveragedModel:
+        model = model.module
+
     with torch.no_grad():
         src_mask = model.make_src_mask(sample).to(device)
         enc_src = model.encoder(sample, src_mask)

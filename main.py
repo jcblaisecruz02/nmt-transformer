@@ -1,9 +1,11 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.swa_utils import AveragedModel
 
 import numpy as np
 import argparse
+import math
 
 from utils.data import TextDataset, collate_fn
 from utils.model import Encoder, Decoder, Seq2Seq, count_parameters
@@ -59,6 +61,10 @@ def main():
     parser.add_argument('--save_every', type=int, default=1, help='Save checkpoint every --save_every epoch')
     parser.add_argument('--pad_token', type=str, default='<pad>', help='Override default padding token')
 
+    parser.add_argument('--use_swa', action='store_true', help='Use stochastic weight averaging')
+    parser.add_argument('--swa_pct', type=float, help='Last percentage of total training steps to average')
+    parser.add_argument('--swa_times', type=int, help='Number of times to average over swa_pct')
+
     parser.add_argument('--seed', type=int, default=1111, help='Random seed')
     
     args = parser.parse_args()
@@ -107,6 +113,10 @@ def main():
                           fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, train_dataset.src_word2idx[args.pad_token], train_dataset.trg_word2idx[args.pad_token], tie_weights=args.tie_weights).to(device)
         
+        # Configure SWA
+        if args.use_swa: swa_model = AveragedModel(model)
+        else: swa_model = None
+
         # Produce criterion
         if args.criterion == 'cross_entropy':
             criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
@@ -166,6 +176,10 @@ def main():
             with open(args.save_dir + '/model.bin', 'rb') as f:
                 model.load_state_dict(torch.load(f))
                 print('Model loaded...', end='')
+            if args.use_swa:
+                with open(args.save_dir + '/swa_model.bin', 'rb') as f:
+                    swa_model.load_state_dict(torch.load(f))
+                    print('SWA Model loaded...', end='')
             with open(args.save_dir + '/training.bin', 'rb') as f:
                 training_state = torch.load(f)
                 optimizer.load_state_dict(training_state['opt_state'])
@@ -177,28 +191,54 @@ def main():
                     print('Scheduler loaded...', end='')
                 else:
                     print('No scheduler found...')
-            print("Done!\nLoaded checkpoint from epoch {}!\n".format(training_state['e']))
-        
+            global_steps = len(train_loader) * (e - 1)
+            print("Done!\nLoaded checkpoint from epoch {} | Global step {}!".format(training_state['e'], global_steps))
+            
         # Else, begin from epoch 1
         else:
-            print("Beginning training from epoch 1.\n")
+            print("Beginning training from epoch 1.")
             e = 1
+            global_steps = 0
+
+        # Print training setup
+        total_steps = len(train_loader) * (args.epochs)
+        print('Total number of steps: {}'.format(total_steps))
+        
+        # Configure SWA points
+        if args.use_swa: 
+            swa_every = sorted(list(set([round(total_steps * (1 - args.swa_pct * i)) for i in range(args.swa_times)])))
+            print('SWA on steps: {}\n'.format(swa_every)) 
+        else: 
+            swa_every = None
+            print('\n')
 
         # Train Model
         while e < args.epochs + 1:
             # Train one epoch
-            train_loss = train(model, criterion, optimizer, train_loader, device=device, clip=args.clip, scheduler=scheduler, fp16=args.fp16)
+            train_loss, global_steps = train(model, criterion, optimizer, train_loader, global_steps, 
+                                            device=device, clip=args.clip, scheduler=scheduler, fp16=args.fp16, 
+                                            swa=args.use_swa, swa_every=swa_every, swa_model=swa_model)
             valid_loss = evaluate(model, criterion, valid_loader, device=device)
+
             print("Epoch {:3} | Train Loss {:.4f} | Train Ppl {:.4f} | Valid Loss {:.4f} | Valid Ppl {:.4f}".format(e, train_loss, np.exp(train_loss), valid_loss, np.exp(valid_loss)))
 
             # Save the checkpoint
             if e % args.save_every == 0 or e == args.epochs:
                 print('Saving checkpoint for epoch {}...'.format(e), end='')
-                save_checkpoint(model, args, optimizer=optimizer, e=e, scheduler=scheduler, save_state=True)
+                save_checkpoint(model, args, optimizer=optimizer, e=e, scheduler=scheduler, save_state=True, swa_model=swa_model)
                 print('Done!')
             
             # Update epoch number
             e += 1
+
+        # Evaluate again and save if we're using SWA
+        if args.use_swa:
+            print('Evaluating on final averaged model.')
+            valid_loss = evaluate(swa_model, criterion, valid_loader, device=device)
+            print("Valid Loss {:.4f} | Valid Ppl {:.4f}".format(valid_loss, np.exp(valid_loss)))
+            print('Saving checkpoint for averaged model.')
+            save_checkpoint(model, args, optimizer=optimizer, e=e, scheduler=scheduler, save_state=True, swa_model=swa_model)
+            print('Done!')
 
         print("Training done!\n")
 
@@ -217,7 +257,7 @@ def main():
         # Produce setup
         print("Loading model and saved settings.")
         with open(args.save_dir + '/settings.bin', 'rb') as f:
-            hd, nl, nh, pf, dp, smsl, tmsl, tw = torch.load(f)
+            hd, nl, nh, pf, dp, smsl, tmsl, tw, usw, cri = torch.load(f)
 
         encoder = Encoder(vocab_sz=test_dataset.src_vocab_sz, 
                           hidden_dim=hd, 
@@ -237,19 +277,30 @@ def main():
                           fp16=args.fp16)
         model = Seq2Seq(encoder, decoder, test_dataset.src_word2idx[args.pad_token], test_dataset.trg_word2idx[args.pad_token], tie_weights=tw)
 
-        if args.criterion == 'cross_entropy':
-            criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.src_word2idx[args.pad_token])
-        elif args.criterion == 'label_smoothing':
-            criterion = LabelSmoothingLoss(train_dataset.trg_vocab_sz, smoothing=args.smoothing)
+        if cri == 'cross_entropy':
+            criterion = nn.CrossEntropyLoss(ignore_index=test_dataset.trg_word2idx[args.pad_token])
+        elif cri == 'label_smoothing':
+            criterion = LabelSmoothingLoss(test_dataset.trg_vocab_sz, smoothing=args.smoothing)
 
         # Load the checkpoint
+        if usw:
+            swa_model = AveragedModel(model)
+            with open(args.save_dir + '/swa_model.bin', 'rb') as f:
+                swa_model.load_state_dict(torch.load(f))
+                swa_model = swa_model.to(device)
+
         with open(args.save_dir + '/model.bin', 'rb') as f:
             model.load_state_dict(torch.load(f))
         model = model.to(device)
         
-        print("Begin testing.")
+        print("\nBegin testing.")
         test_loss = evaluate(model, criterion, test_loader, device=device)
         print("Test Loss {:.4f} | Test Ppl {:.4f}".format(test_loss, np.exp(test_loss)))
+
+        if usw:
+            print('Testing SWA model.')
+            test_loss = evaluate(swa_model, criterion, test_loader, device=device)
+            print("Test Loss {:.4f} | Test Ppl {:.4f}".format(test_loss, np.exp(test_loss)))
 
 if __name__ == '__main__':
     main()

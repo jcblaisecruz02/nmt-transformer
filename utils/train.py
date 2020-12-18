@@ -1,5 +1,7 @@
 import torch 
 import torch.nn as nn
+from torch.optim.swa_utils import AveragedModel
+
 import numpy as np 
 import os
 from os import path
@@ -12,9 +14,10 @@ try:
 except ModuleNotFoundError:
     APEX_AVAILABLE = False
 
-def train(model, criterion, optimizer, train_loader, device=None, clip=0.0, scheduler=None, fp16=False):
+def train(model, criterion, optimizer, train_loader, global_steps, device=None, clip=0.0, scheduler=None, fp16=False, swa=False, swa_every=None, swa_model=None):
     train_loss = AverageMeter()
     model.train()
+    num_steps = 0
 
     with tqdm(train_loader) as pbar:
         for x, y in pbar:
@@ -37,12 +40,19 @@ def train(model, criterion, optimizer, train_loader, device=None, clip=0.0, sche
             optimizer.step()
             if scheduler is not None: scheduler.step()
 
+            # Handle model averaging
+            if swa:
+                if global_steps in swa_every:
+                    swa_model.update_parameters(model)
+
+            global_steps += 1
+
             # Set progress bar information
             pbar.set_postfix({'lr': optimizer.param_groups[0]['lr'], 
-                              'loss': train_loss.avg})
+                              'loss': train_loss.avg, 'global_step': global_steps})
 
             train_loss.update(loss.item(), x.shape[0]) 
-    return train_loss.avg
+    return train_loss.avg, global_steps
 
 def evaluate(model, criterion, valid_loader, device=None):
     valid_loss = AverageMeter()
@@ -59,15 +69,18 @@ def evaluate(model, criterion, valid_loader, device=None):
             valid_loss.update(loss.item(), x.shape[0])
     return valid_loss.avg
 
-def save_checkpoint(model, args, optimizer=None, e=None, scheduler=None, save_state=False):
+def save_checkpoint(model, args, optimizer=None, e=None, scheduler=None, save_state=False, swa_model=None):
     if path.exists(args.save_dir): os.system('rm -r ' + args.save_dir)
     os.mkdir(args.save_dir)
 
     with open(args.save_dir + '/model.bin', 'wb') as f:
         torch.save(model.state_dict(), f)
     with open(args.save_dir + '/settings.bin', 'wb') as f:
-        torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout, args.src_msl, args.trg_msl, args.tie_weights], f)
-    
+        torch.save([args.hidden_dim, args.n_layers, args.n_heads, args.pf_dim, args.dropout, args.src_msl, args.trg_msl, args.tie_weights, args.use_swa, args.criterion], f)
+    if args.use_swa:
+        with open(args.save_dir + '/swa_model.bin', 'wb') as f:
+            torch.save(swa_model.state_dict(), f)
+
     # Save the optimizer state for training
     if save_state and optimizer is not None:
         with warnings.catch_warnings(): # Ignore initial "please save opt and scheduler" warning

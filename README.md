@@ -130,6 +130,17 @@ To use settings indicated in the paper, set the following flags:
 
 The `--warmup_steps` parameter will override the `--warmup_pct` parameter. Make sure to compute how many batches you are training per epoch to use an appropriate number of warmup steps relative to the number of total steps.
 
+For stochastic weight averaging, you may use the following parameters:
+
+```
+    --use_swa \
+    --swa_pct 0.02 \
+    --swa_times 5 \
+    ...
+```
+
+This performs model averaging five times over the last 10% of total steps, with an interval of 2% of the total steps. Using the `--use_swa` flag will save the actual model (`model.bin`) and the averaged model (`swa_model.bin`) separately in the `--save_dir` directory.
+
 For more information on reproduction scores and setups, see [Results and Reproduction Milestones](https://github.com/jcblaisecruz02/nmt-transformer#results-and-reproduction-milestones) below.
 
 # Producing Translations
@@ -179,6 +190,13 @@ python nmt-transformer/translate.py \
 
 This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. If your input file has not been segmented by SentencePiece yet, remove the `--desegment` toggle from the command line arguments (do note that this will increase the translation time by 3x). We highly encourage the use of `--use_cuda` during translation to speed up the process.
 
+The translation script will use the non-averaged saved model by default. To use the averaged model, use the following flag:
+
+```
+    --use_swa \
+    ...
+```
+
 To get a BLEU score for the translated corpus, use the following provided script:
 
 ```
@@ -200,6 +218,7 @@ BLEU: 20.08
 **December 18, 2020**
 - [x] Added Noam scheduling.
 - [x] Added Label Smoothing.
+- [x] Added Stochastic Weight Averaging (SWA).
 
 **December 17, 2020**
 - [x] Added translation scripts and modes.
