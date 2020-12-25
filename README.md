@@ -128,7 +128,7 @@ Our averaged model test perplexity is only 0.78 perplexity points lower than the
 
 The script will save checkpoints in the directory passed to `--save_dir`. Training can be resumed from the checkpoint by using the `--resume_training` flag. 
 
-To perform experiments with varying model settings, the following arguments may be togged:
+To perform experiments with varying model settings, the following arguments may be toggled:
 * `--tie_weights` — will tie the weights of the encoder embeddings, the decoder embeddings, and the softmax projection layer. When weights are tied, a joint vocabulary must be given to both the encoder and decoder. Otherwise, you can opt to use language-specific BPE vocabularies instead. This will, however, result in a much larger model size and training time.
 * `--criterion` — the authors of the paper use label smoothing, which is implemented as `--criterion label_smoothing` in the training script. To use standard cross entropy loss, `cross_entropy` should be passed instead.
 * `--smoothing` — controls label smoothing.
@@ -231,7 +231,7 @@ Here is a table describing the current reproduction scores and progress:
 | Model | Hyperparameters                 | PPL Reproduced     | PPL Difference       | BLEU Reproduced    | BLEU Difference       | Remarks            |
 |-------|---------------------------------|--------------------|----------------------|--------------------|-----------------------|--------------------|
 | Base  | `N=6`, `d_model=512`, `dff=2014`, `h=8` |  |  |  |  | In progress |
-| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :arrows_counterclockwise: 20.41 BLEU | -3.29 | BLEU results from greedy search, beam search results in progress. Uses positional embeddings |
+| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :arrows_counterclockwise: 20.41 BLEU | -3.29 | BLEU results from greedy search, beam search results in progress. Uses positional embeddings. |
 | E     | Positional embeddings instead of sinusoids |  |  |  |  | In progress |
 | Notes | *\*Uses the same settings as the base model unless specified* | | *\*Lower PPL is better* | | *\*Higher BLEU is better* | |
 
@@ -245,7 +245,7 @@ python nmt-transformer/bleu.py --translation_file output.txt --reference_file wm
 ```
 
 # Changelog
-**December 25, 2018**
+**December 25, 2020**
 - [x] Added beam search.
 - [x] Added initial reproduction results.
 
