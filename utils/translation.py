@@ -16,7 +16,7 @@ class State:
     def __eq__(self,  other):
         return str(self) == str(other)
 
-def build_tree(model, state, beams, queue, candidates, max_words=30, early_stop=None, device=None):
+def build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2idx, max_words=30, early_stop=None, device=None):
     # If EOS or MSL, add the string to candidates
     if state.string[-1] == word2idx['</s>'] or len(state.string) > max_words:
         candidates.append((state.prob, state.string))
@@ -37,28 +37,31 @@ def build_tree(model, state, beams, queue, candidates, max_words=30, early_stop=
 
             queue.append(new_child)
 
-def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, seed=42, device=None, return_top=1, strategy='bfs'):
+def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, seed=42, device=None, strategy='bfs'):
+    '''Input has to be a torch longtensor that's segmented, padded, and processed'''
+    torch.manual_seed(seed)
+    if type(model) is torch.optim.swa_utils.AveragedModel:
+        model = model.module
+    
     # Produce encoder outputs
     with torch.no_grad():
         src_mask = model.make_src_mask(input_ids).to(device)
         enc_src = model.encoder(input_ids, src_mask)
     
-    # Initialize queue and root node
+    # Initialize queue and root node then perform beam search
     queue = [State([word2idx['<s>']], 1)]
     candidates = []
-    best = 0.0
 
-    # Beam search
-    i = 0
     while len(queue) > 0:
         state = queue.pop(0) if strategy == 'bfs' else queue.pop()
-        build_tree(model, state, beams, queue, candidates, max_words, None, device)
-        i += 1
-        print(len(queue), end=' ')
+        build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2idx, max_words, None, device)
 
-    # Return the top n most probable candidates
-    preds = sorted(candidates, key=lambda x: x[0], reverse=True)[:return_top]
-    return [[idx2word[ix] for ix in p[1]] for p in preds]
+    # Return the most probable candidate
+    preds = sorted(candidates, key=lambda x: x[0], reverse=True)[0]
+    preds = [idx2word[ix] for ix in preds[1]]
+    attention = None
+
+    return preds, attention
 
 def translate(sample, model, idx2word, word2idx, max_words=20, seed=42, device=None):
     '''Input has to be a torch longtensor that's segmented, padded, and processed'''
@@ -87,13 +90,14 @@ def translate(sample, model, idx2word, word2idx, max_words=20, seed=42, device=N
     predictions = [idx2word[ix] for ix in tokens]
     attention = attention.squeeze(0).cpu().numpy()
 
+    # TODO: Add support for attention visualization
     return predictions, attention
 
-def translate_one_sentence(s, model, spm_model, src_vocab, idx2word, word2idx, vocab_set, msl=100, desegment=False, max_words=20, seed=42, device=None, is_segmented=False):
+def translate_one_sentence(s, model, spm_model, src_vocab, idx2word, word2idx, vocab_set, beams=1, msl=100, desegment=False, max_words=20, seed=42, device=None, is_segmented=False, strategy='bfs'):
     if not is_segmented: s = segment(s, spm_model, src_vocab)
     input_ids = torch.LongTensor([pad_and_truncate(s, word2idx, msl, vocab_set)]).to(device)
 
-    predictions, attention = translate(input_ids, model, idx2word, word2idx, max_words=max_words, seed=seed, device=device)
+    predictions, attention = beam_search(input_ids, model, idx2word, word2idx, beams=beams, max_words=max_words, seed=seed, device=device, strategy=strategy)
     
     if desegment: 
         predictions = ' '.join(predictions)

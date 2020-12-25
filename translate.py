@@ -2,7 +2,7 @@ import argparse
 
 from utils.model import Encoder, Decoder, Seq2Seq
 from utils.data import segment, unsegment, pad_and_truncate, detokenize, produce_vocabulary
-from utils.translation import translate, translate_one_sentence
+from utils.translation import translate_one_sentence
 
 import torch
 import torch.nn as nn
@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--save_dir', type=str, help='Location of saved checkpoint')
     parser.add_argument('--pad_token', type=str, help='Override padding token', default='<pad>')
     parser.add_argument('--msl', type=int, default=100, help='Maximum sequence length of the model')
+    parser.add_argument('--beams', type=int, default=1, help='Beam width')
+    parser.add_argument('--strategy', type=str, default='bfs', choices=['bfs', 'dfs'], help='State space search strategy')
     parser.add_argument('--max_words', type=int, default=20, help='Maximum number of tokens to generate from the model')
     parser.add_argument('--seed', type=int, default=1111, help='Random seed')
     parser.add_argument('--desegment', action='store_true', help='Desegment the translation')
@@ -85,6 +87,8 @@ def main():
                                                         idx2word, 
                                                         word2idx, 
                                                         vocab_set, 
+                                                        beams=args.beams,
+                                                        strategy=args.strategy,
                                                         msl=args.msl, 
                                                         desegment=args.desegment, 
                                                         max_words=args.max_words, 
@@ -113,6 +117,8 @@ def main():
                                                     word2idx, 
                                                     vocab_set, 
                                                     msl=args.msl, 
+                                                    beams=args.beams,
+                                                    strategy=args.strategy,
                                                     desegment=args.desegment, 
                                                     max_words=args.max_words, 
                                                     seed=args.seed, 
