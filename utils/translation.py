@@ -5,6 +5,61 @@ import math
 
 from .data import segment, pad_and_truncate, unsegment
 
+class State:
+    def __init__(self, string, prob):
+        self.string = string
+        self.prob = prob
+
+    def __str__(self):
+        return "<{}: {}>".format(self.string, self.prob)
+
+    def __eq__(self,  other):
+        return str(self) == str(other)
+
+def build_tree(model, state, beams, queue, candidates, max_words=30, early_stop=None, device=None):
+    # If EOS or MSL, add the string to candidates
+    if state.string[-1] == word2idx['</s>'] or len(state.string) > max_words:
+        candidates.append((state.prob, state.string))
+
+    # Else, use the current string to decode
+    else:
+        trg_tensor = torch.LongTensor(state.string).unsqueeze(0).to(device)
+        trg_mask = model.make_trg_mask(trg_tensor).to(device)
+        with torch.no_grad():
+            out, _ = model.decoder(trg_tensor, enc_src, src_mask, trg_mask)
+            probs, ixs = torch.softmax(out[:, -1], dim=-1).cpu().topk(k=beams, dim=1)
+        
+        # Generate next states
+        for i in range(beams): 
+            new_string = state.string + [ixs[0, i].item()]
+            new_prob = np.exp(np.log(state.prob) + np.log(probs[0, i].item()))
+            new_child = State(new_string, new_prob)
+
+            queue.append(new_child)
+
+def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, seed=42, device=None, return_top=1, strategy='bfs'):
+    # Produce encoder outputs
+    with torch.no_grad():
+        src_mask = model.make_src_mask(input_ids).to(device)
+        enc_src = model.encoder(input_ids, src_mask)
+    
+    # Initialize queue and root node
+    queue = [State([word2idx['<s>']], 1)]
+    candidates = []
+    best = 0.0
+
+    # Beam search
+    i = 0
+    while len(queue) > 0:
+        state = queue.pop(0) if strategy == 'bfs' else queue.pop()
+        build_tree(model, state, beams, queue, candidates, max_words, None, device)
+        i += 1
+        print(len(queue), end=' ')
+
+    # Return the top n most probable candidates
+    preds = sorted(candidates, key=lambda x: x[0], reverse=True)[:return_top]
+    return [[idx2word[ix] for ix in p[1]] for p in preds]
+
 def translate(sample, model, idx2word, word2idx, max_words=20, seed=42, device=None):
     '''Input has to be a torch longtensor that's segmented, padded, and processed'''
     torch.manual_seed(seed)
