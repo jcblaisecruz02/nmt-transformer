@@ -152,42 +152,61 @@ To translate a single unsegmented, untokenized sentence from the source to the t
 python nmt-transformer/translate.py \
     --translate_sentence \
     --sentence "Republican leaders justified their policy by the need to combat electoral fraud ." \
-    --src_vocab tokenizers/wmt14en.vocab \
+    --joint_model tokenizers/wmt14joint.model \
     --joint_vocab tokenizers/wmt14joint.vocab \
-    --spm_model tokenizers/wmt14joint.model \
-    --save_dir transformer_base_modelc \
+    --src_vocab tokenizers/wmt14en.vocab \
+    --save_dir base_modelc \
     --desegment \
     --beams 1 \
+    --max_words 50 \
     --msl 100 \
-    --max_words 20 \
     --seed 42
 ```
 
 Using the model trained in the previous section should give the following output:
 
 ```
-Translation: Die republikanischen Führer haben ihre Politik durch die Notwendigkeit , Wahlbetrug zu bekämpfen .
+Die republikanischen Führer haben ihre Politik durch die Notwendigkeit , Wahlbetrug zu bekämpfen .
 ```
 
 By default, the translation script will use greedy decoding (`--beams 1`). To use beam search with a higher beam width N, use `--beams N`. Do note that this will decode N^max_words - 1 tokens (with beam size 2 and max words 30, this is already 1 billion tokens) which is very computationally slow!
+
+To use Top-K/Nucleus sampling, add the following flags:
+
+```
+    --use_topk \
+    --top_k 50 \
+    --top_p 0.92 \
+    --temperature 0.3 \
+```
+
+Adding this to the earlier examples will give us the following translation:
+
+```
+Die republikanischen Führer haben ihre Politik durch die Notwendigkeit zur Bekämpfung von Wahlbetrug gerechtfertigt .
+```
+
 
 We can also translate an entire file (say, for producing translations of the test set). This assumes that the input test file has already been segmented via SentencePiece. To produce translations this way, the following command may be used:
 
 ```
 python nmt-transformer/translate.py \
     --translate_file \
+    --is_segmented \
     --src_file tokenized_wmt14/test_tokenized.en \
     --output_file output.txt \
-    --src_vocab tokenizers/wmt14en.vocab \
+    --joint_model tokenizers/wmt14joint.model \
     --joint_vocab tokenizers/wmt14joint.vocab \
-    --spm_model tokenizers/wmt14joint.model \
-    --save_dir transformer_base_modelc \
+    --src_vocab tokenizers/wmt14en.vocab \
+    --save_dir base_modelc \
     --beams 1 \
-    --desegment \
+    --use_topk \
+    --top_k 50 \
+    --top_p 0.92 \
+    --temperature 0.3 \
+    --max_words 50 \
     --msl 100 \
-    --max_words 100 \
-    --seed 42 \
-    --use_cuda
+    --seed 42
 ```
 
 This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. If your input file has not been segmented by SentencePiece yet, remove the `--desegment` toggle from the command line arguments (do note that this will increase the translation time by 3x). I highly encourage the use of `--use_cuda` during translation to speed up the process.
@@ -201,21 +220,21 @@ python nmt-transformer/translate.py \
     --use_swa
 ```
 
-To get a BLEU score for the translated corpus, use the following provided script:
+To get a BLEU score for the tokenized translated corpus, use the following provided script:
 
 ```
 python nmt-transformer/bleu.py \
     --translation_file output.txt \
-    --reference_file wmt14/newstest2013.de
+    --reference_file tokenized_wmt14/test_tokenized.de
 ```
 
 Using translations produced form the model trained in the previous section should give the following score:
 
 ```
-BLEU: 20.41
+BLEU: 24.6
 ```
 
-This is 3.29 BLEU points lower than the reported test BLEU for the same model in the paper (23.7 BLEU), which is expected given our use of greedy decoding.
+This is 0.9 BLEU points higher than the reported test BLEU for the same model in the paper (23.7 BLEU).
 
 # Results and Reproduction Milestones
 
@@ -231,7 +250,7 @@ Here is a table describing the current reproduction scores and progress:
 | Model | Hyperparameters                 | PPL Reproduced     | PPL Difference       | BLEU Reproduced    | BLEU Difference       | Remarks            |
 |-------|---------------------------------|--------------------|----------------------|--------------------|-----------------------|--------------------|
 | Base  | `N=6`, `d_model=512`, `dff=2014`, `h=8` |  |  |  |  | In progress |
-| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :arrows_counterclockwise: 20.41 BLEU | -3.29 | BLEU results from greedy search, beam search results in progress. Uses positional embeddings. |
+| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :white_check_mark: 24.6 BLEU | +0.9 | BLEU results using nucleus sampling. Uses positional embeddings. |
 | E     | Positional embeddings instead of sinusoids |  |  |  |  | In progress |
 | Notes | *\*Uses the same settings as the base model unless specified* | | *\*Lower PPL is better* | | *\*Higher BLEU is better* | |
 
@@ -240,11 +259,15 @@ To reproduce the results in the table, the commands used to train and translate 
 **Model C**
 ```
 python nmt-transformer/main.py --save_dir transformer_base_modelc --do_test --do_train --train_dir dataset/train --valid_dir dataset/test --test_dir dataset/test --src_vocab tokenizers/wmt14joint.vocab --trg_vocab tokenizers/wmt14joint.vocab --num_workers 4 --src_msl 100 --trg_msl 100 --tie_weights --hidden_dim 512 --n_layers 2 --n_heads 8 --pf_dim 2048 --dropout 0.1 --optimizer adam --learning_rate 1e-3 --adam_epsilon 1e-9 --adam_b1 0.9 --adam_b2 0.98 --weight_decay 0.0 --scheduler noam --warmup_steps 4190 --criterion label_smoothing --smoothing 0.1 --clip 1.0 --batch_size 128 --epochs 3 --seed 1111 --use_swa --swa_pct 0.05 --swa_times 5
-python nmt-transformer/translate.py --translate_file --src_file tokenized_wmt14/test_tokenized.en --output_file output.txt --src_vocab tokenizers/wmt14en.vocab --joint_vocab tokenizers/wmt14joint.vocab --spm_model tokenizers/wmt14joint.model --save_dir transformer_base_modelc --beams 1 --desegment --msl 100 --max_words 100 --seed 42 --use_cuda--use_swa
-python nmt-transformer/bleu.py --translation_file output.txt --reference_file wmt14/newstest2013.de
+python nmt-transformer/translate.py --translate_file --is_segmented --src_file tokenized_wmt14/test_tokenized.en --output_file output.txt --joint_model tokenizers/wmt14joint.model --joint_vocab tokenizers/wmt14joint.vocab --src_vocab tokenizers/wmt14en.vocab --save_dir base_modelc --beams 1 --use_topk --top_k 50 --top_p 0.92 --temperature 0.3 --max_words 50 --msl 100 --seed 42
+python nmt-transformer/bleu.py --translation_file output.txt --reference_file tokenized_wmt14/test_tokenized.de
 ```
 
 # Changelog
+**December 28, 2020**
+- [x] Added Top-K and Nucleus Sampling.
+- [x] Added updated BLEU results.
+
 **December 25, 2020**
 - [x] Added beam search.
 - [x] Added initial reproduction results.

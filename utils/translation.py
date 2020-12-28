@@ -1,10 +1,10 @@
 import torch 
+import torch.nn.functional as F
 import collections
 import numpy as np
 import math
 
 from .data import segment, pad_and_truncate, unsegment
-
 class State:
     def __init__(self, string, prob):
         self.string = string
@@ -16,7 +16,37 @@ class State:
     def __eq__(self,  other):
         return str(self) == str(other)
 
-def build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2idx, max_words=30, early_stop=None, device=None):
+def top_k_top_p_filtering(logits, top_k=0, top_p=0.0, filter_value=-float('Inf')):
+    """ Filter a distribution of logits using top-k and/or nucleus (top-p) filtering
+        Args:
+            logits: logits distribution shape (vocabulary size)
+            top_k >0: keep only top k tokens with highest probability (top-k filtering).
+            top_p >0.0: keep the top tokens with cumulative probability >= top_p (nucleus filtering).
+                Nucleus filtering is described in Holtzman et al. (http://arxiv.org/abs/1904.09751)
+    """
+    assert logits.dim() == 1
+    top_k = min(top_k, logits.size(-1))  # Safety check
+    if top_k > 0:
+        # Remove all tokens with a probability less than the last token of the top-k
+        indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+        logits[indices_to_remove] = filter_value
+
+    if top_p > 0.0:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+
+        # Remove tokens with cumulative probability above the threshold
+        sorted_indices_to_remove = cumulative_probs > top_p
+        # Shift the indices to the right to keep also the first token above the threshold
+        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+        sorted_indices_to_remove[..., 0] = 0
+
+        indices_to_remove = sorted_indices[sorted_indices_to_remove]
+        logits[indices_to_remove] = filter_value
+    return logits
+
+def build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2idx, max_words=30, 
+               top_k=0.0, top_p=0.0, temperature=1.0, use_topk=False, device=None):
     # If EOS or MSL, add the string to candidates
     if state.string[-1] == word2idx['</s>'] or len(state.string) > max_words:
         candidates.append((state.prob, state.string))
@@ -27,17 +57,28 @@ def build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2i
         trg_mask = model.make_trg_mask(trg_tensor).to(device)
         with torch.no_grad():
             out, _ = model.decoder(trg_tensor, enc_src, src_mask, trg_mask)
-            probs, ixs = torch.softmax(out[:, -1], dim=-1).cpu().topk(k=beams, dim=1)
+
+            if use_topk:
+                logits = out[0, -1, :] / temperature
+                filtered = top_k_top_p_filtering(logits, top_k=top_k, top_p=top_p)
+                probabilities = torch.softmax(filtered, dim=-1)
+                ixs = torch.multinomial(probabilities, beams).cpu()
+                probs = torch.softmax(out[0, :, :], dim=1)[0, ixs].cpu()
+            else:
+                probs, ixs = torch.softmax(out[:, -1], dim=-1).cpu().topk(k=beams, dim=1)
+                probs, ixs = probs[0, :], ixs[0, :]
         
         # Generate next states
         for i in range(beams): 
-            new_string = state.string + [ixs[0, i].item()]
-            new_prob = np.exp(np.log(state.prob) + np.log(probs[0, i].item()))
+            new_string = state.string + [ixs[i].item()]
+            #new_prob = state.prob * probs[i].item()
+            new_prob = np.exp(np.log(state.prob) + torch.log(probs[i]).item())
             new_child = State(new_string, new_prob)
 
             queue.append(new_child)
 
-def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, seed=42, device=None, strategy='bfs'):
+def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, seed=42, 
+                top_k=0.0, top_p=0.0, temperature=1.0, device=None, strategy='bfs', use_topk=False):
     '''Input has to be a torch longtensor that's segmented, padded, and processed'''
     torch.manual_seed(seed)
     if type(model) is torch.optim.swa_utils.AveragedModel:
@@ -54,7 +95,8 @@ def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, see
 
     while len(queue) > 0:
         state = queue.pop(0) if strategy == 'bfs' else queue.pop()
-        build_tree(model, enc_src, src_mask, state, beams, queue, candidates, word2idx, max_words, None, device)
+        build_tree(model, enc_src, src_mask, state, beams, queue, candidates, 
+                   word2idx, max_words, top_k, top_p, temperature, use_topk, device)
 
     # Return the most probable candidate
     preds = sorted(candidates, key=lambda x: x[0], reverse=True)[0]
@@ -63,47 +105,24 @@ def beam_search(input_ids, model, idx2word, word2idx, beams=1, max_words=20, see
 
     return preds, attention
 
-def translate(sample, model, idx2word, word2idx, max_words=20, seed=42, device=None):
-    '''Input has to be a torch longtensor that's segmented, padded, and processed'''
-    torch.manual_seed(seed)
-
-    if type(model) is torch.optim.swa_utils.AveragedModel:
-        model = model.module
-
-    with torch.no_grad():
-        src_mask = model.make_src_mask(sample).to(device)
-        enc_src = model.encoder(sample, src_mask)
-
-        tokens = [word2idx['<s>']]
-
-        for _ in range(max_words):
-            trg_tensor = torch.LongTensor(tokens).unsqueeze(0).to(device)
-            trg_mask = model.make_trg_mask(trg_tensor).to(device)
-            out, attention = model.decoder(trg_tensor, enc_src, src_mask, trg_mask)
-
-            pred_ix = out.argmax(2)[:, -1].item()
-            tokens.append(pred_ix)    
-
-            if pred_ix == word2idx['</s>']: break
-
-    # Convert predictions from indices to text. Cut the attentions to translation length
-    predictions = [idx2word[ix] for ix in tokens]
-    attention = attention.squeeze(0).cpu().numpy()
-
-    # TODO: Add support for attention visualization
-    return predictions, attention
-
-def translate_one_sentence(s, model, spm_model, src_vocab, idx2word, word2idx, vocab_set, beams=1, msl=100, desegment=False, max_words=20, seed=42, device=None, is_segmented=False, strategy='bfs'):
+def translate_one_sentence(s, model, spm_model, src_vocab, idx2word, word2idx, vocab_set, 
+                           beams=1, msl=100, desegment=False, max_words=20, seed=42, 
+                           device=None, is_segmented=False, strategy='bfs', 
+                           top_k=0.0, top_p=0.0, temperature=1.0, use_topk=False):
     if not is_segmented: s = segment(s, spm_model, src_vocab)
     input_ids = torch.LongTensor([pad_and_truncate(s, word2idx, msl, vocab_set)]).to(device)
 
-    predictions, attention = beam_search(input_ids, model, idx2word, word2idx, beams=beams, max_words=max_words, seed=seed, device=device, strategy=strategy)
+    predictions, attention = beam_search(input_ids, model, idx2word, word2idx, beams=beams, 
+                                         max_words=max_words, top_k=top_k, top_p=top_p, 
+                                         temperature=temperature, seed=seed, device=device, 
+                                         strategy=strategy, use_topk=use_topk)
     
     if desegment: 
         predictions = ' '.join(predictions)
         predictions = unsegment(predictions, spm_model)
 
     return predictions, attention
+
 
 def _get_ngrams(segment, max_order):
     """Extracts all n-grams up to a given maximum order from an input segment.
