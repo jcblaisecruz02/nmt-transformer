@@ -19,12 +19,10 @@ Currently, this is a work in progress, so expect sharp edges and unimplemented p
 * PyTorch v1.x.
 * NVIDIA Apex for FP16 training.
 * NVIDIA GPU (all experiments were run on NVIDIA Tesla V100 GPUs).
-* [PyTorch LAMB](https://github.com/cybertronai/pytorch-lamb) (Optional) for LAMB optimizer.
-* [HuggingFace Transformers](https://huggingface.co/transformers/index.html) (Optional) for AdamW and linear warmup scheduler.
 
 # Data Processing
 
-I use the WMT 14 German-English parallel corpus for training our Transformer model. A preprocessed version can be accessed through the Stanford NLP Group's website [here](https://nlp.stanford.edu/projects/nmt/). For testing, I use the Newstest 2014 parallel corpus for English and German. The test data can also be found in the same site.
+I use the WMT 14 German-English parallel corpus for training our Transformer model. A preprocessed (pretokenized) version can be accessed through the Stanford NLP Group's website [here](https://nlp.stanford.edu/projects/nmt/). For testing, I use the Newstest 2013 parallel corpus for English and German. The test data can also be found in the same site.
 
 Download the data as follows:
 ```
