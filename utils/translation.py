@@ -5,6 +5,7 @@ import numpy as np
 import math
 
 from .data import segment, pad_and_truncate, unsegment
+
 class State:
     def __init__(self, string, prob):
         self.string = string
@@ -123,6 +124,7 @@ def translate_one_sentence(s, model, spm_model, src_vocab, idx2word, word2idx, v
 
     return predictions, attention
 
+# BLEU Score implementation Copyright 2020 Tensor2Tensor authors
 
 def _get_ngrams(segment, max_order):
     """Extracts all n-grams up to a given maximum order from an input segment.
@@ -140,8 +142,6 @@ def _get_ngrams(segment, max_order):
             ngram = tuple(segment[i:i + order])
             ngram_counts[ngram] += 1
     return ngram_counts
-
-# BLEU Score implementation Copyright 2020 Tensor2Tensor authors
 
 def compute_bleu(reference_corpus, translation_corpus, max_order=4, use_bp=True):
     """Computes BLEU score of translated segments against one or more references.

@@ -16,13 +16,15 @@ Currently, this is a work in progress, so expect sharp edges and unimplemented p
 
 # Requirements
 * [SentencePiece](https://github.com/google/sentencepiece) for training tokenizers.
-* PyTorch v1.x.
+* PyTorch v1.6+
+* [SacreMoses](https://github.com/alvations/sacremoses) for detokenization.
+* [SacreBLEU](https://github.com/mjpost/sacrebleu) for consistent scoring.
 * NVIDIA Apex for FP16 training.
 * NVIDIA GPU (all experiments were run on NVIDIA Tesla V100 GPUs).
 
 # Data Processing
 
-I use the WMT 14 German-English parallel corpus for training our Transformer model. A preprocessed (pretokenized) version can be accessed through the Stanford NLP Group's website [here](https://nlp.stanford.edu/projects/nmt/). For testing, I use the Newstest 2013 parallel corpus for English and German. The test data can also be found in the same site.
+I use the WMT 14 German-English parallel corpus for training our Transformer model. A preprocessed (pretokenized) version can be accessed through the Stanford NLP Group's website [here](https://nlp.stanford.edu/projects/nmt/). For testing, I use the Newstest 2013 parallel corpus for English and German. The test data can also be found in the same site. Data coming from the Stanford NLP site is pre-tokenized (via Moses) with split compound words (ie. "-" turns to " ##AT##-##AT## "). You can also opt to compile the data yourself, but you'll have to tokenize this (via Moses) then split the compound words yourself.
 
 Download the data as follows:
 ```
@@ -144,7 +146,7 @@ For speedups, 16-bit floating point training is also available through NVIDIA Ap
 For more information on reproduction scores and setups, see [Results and Reproduction Milestones](https://github.com/jcblaisecruz02/nmt-transformer#results-and-reproduction-milestones) below.
 
 # Producing Translations
-To translate a single unsegmented, untokenized sentence from the source to the target language, the following command may be used:
+To translate a single unsegmented sentence from the source to the target language, the following command may be used:
 
 ```
 python nmt-transformer/translate.py \
@@ -167,7 +169,7 @@ Using the model trained in the previous section should give the following output
 Die republikanischen Führer haben ihre Politik durch die Notwendigkeit , Wahlbetrug zu bekämpfen .
 ```
 
-By default, the translation script will use greedy decoding (`--beams 1`). To use beam search with a higher beam width N, use `--beams N`. Do note that this will decode N^max_words - 1 tokens (with beam size 2 and max words 30, this is already 1 billion tokens) which is very computationally slow!
+This requires the input to be Moses tokenized beforehand. By default, the translation script will use greedy decoding (`--beams 1`). To use beam search with a higher beam width N, use `--beams N`. Do note that this will decode N^max_words - 1 tokens (with beam size 2 and max words 30, this is already 1 billion tokens) which is very computationally slow!
 
 To use Top-K/Nucleus sampling, add the following flags:
 
@@ -185,7 +187,7 @@ Die republikanischen Führer haben ihre Politik durch die Notwendigkeit zur Bek�
 ```
 
 
-We can also translate an entire file (say, for producing translations of the test set). This assumes that the input test file has already been segmented via SentencePiece. To produce translations this way, the following command may be used:
+We can also translate an entire file (say, for producing translations of the test set). This assumes that the input test file has already been tokenized via Moses and segmented via SentencePiece. To produce translations this way, the following command may be used:
 
 ```
 python nmt-transformer/translate.py \
@@ -218,21 +220,22 @@ python nmt-transformer/translate.py \
     --use_swa
 ```
 
-To get a BLEU score for the tokenized translated corpus, use the following provided script:
+To get a Detokenized BLEU score of the output translations, use the following script:
 
 ```
 python nmt-transformer/bleu.py \
     --translation_file output.txt \
-    --reference_file tokenized_wmt14/test_tokenized.de
+    --reference_file wmt14/newstest2013.de \
+    --tgt_lang de
 ```
 
-Using translations produced form the model trained in the previous section should give the following score:
+This detokenizes the translations and the references then computes BLEU using the SacreBLEU wrapper for consistency in reporting scores with other papers. Using translations produced form the model trained in the previous section should give the following score:
 
 ```
-BLEU: 24.6
+BLEU: 20.85
 ```
 
-This is 0.9 BLEU points higher than the reported test BLEU for the same model in the paper (23.7 BLEU).
+This is 2.85 BLEU points lower than the reported test BLEU for the same model in the paper (23.7 BLEU).
 
 # Results and Reproduction Milestones
 
@@ -248,8 +251,7 @@ Here is a table describing the current reproduction scores and progress:
 | Model | Hyperparameters                 | PPL Reproduced     | PPL Difference       | BLEU Reproduced    | BLEU Difference       | Remarks            |
 |-------|---------------------------------|--------------------|----------------------|--------------------|-----------------------|--------------------|
 | Base  | `N=6`, `d_model=512`, `dff=2014`, `h=8` |  |  |  |  | In progress |
-| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :white_check_mark: 24.6 BLEU | +0.9 | BLEU results using nucleus sampling. Uses positional embeddings. |
-| E     | Positional embeddings instead of sinusoids |  |  |  |  | In progress |
+| C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :arrows_counterclockwise: 20.85 BLEU | -2.85 | BLEU results using nucleus sampling. Uses positional embeddings. |
 | Notes | *\*Uses the same settings as the base model unless specified* | | *\*Lower PPL is better* | | *\*Higher BLEU is better* | |
 
 To reproduce the results in the table, the commands used to train and translate the models are indicated below.
@@ -258,10 +260,14 @@ To reproduce the results in the table, the commands used to train and translate 
 ```
 python nmt-transformer/main.py --save_dir transformer_base_modelc --do_test --do_train --train_dir dataset/train --valid_dir dataset/test --test_dir dataset/test --src_vocab tokenizers/wmt14joint.vocab --trg_vocab tokenizers/wmt14joint.vocab --num_workers 4 --src_msl 100 --trg_msl 100 --tie_weights --hidden_dim 512 --n_layers 2 --n_heads 8 --pf_dim 2048 --dropout 0.1 --optimizer adam --learning_rate 1e-3 --adam_epsilon 1e-9 --adam_b1 0.9 --adam_b2 0.98 --weight_decay 0.0 --scheduler noam --warmup_steps 4190 --criterion label_smoothing --smoothing 0.1 --clip 1.0 --batch_size 128 --epochs 3 --seed 1111 --use_swa --swa_pct 0.05 --swa_times 5
 python nmt-transformer/translate.py --translate_file --is_segmented --src_file tokenized_wmt14/test_tokenized.en --output_file output.txt --joint_model tokenizers/wmt14joint.model --joint_vocab tokenizers/wmt14joint.vocab --src_vocab tokenizers/wmt14en.vocab --save_dir base_modelc --beams 1 --use_topk --top_k 50 --top_p 0.92 --temperature 0.3 --max_words 50 --msl 100 --seed 42
-python nmt-transformer/bleu.py --translation_file output.txt --reference_file tokenized_wmt14/test_tokenized.de
+python nmt-transformer/bleu.py --translation_file output.txt --reference_file tokenized_wmt14/test_tokenized.de --tgt_lang de
 ```
 
 # Changelog
+**January 3, 2020**
+- [x] Added detokenizing via Moses.
+- [x] Converted BLEU scoring to SacreBLEU for consistency.
+
 **December 28, 2020**
 - [x] Added Top-K and Nucleus Sampling.
 - [x] Added updated BLEU results.
