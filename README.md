@@ -54,10 +54,10 @@ spm_encode --model=tokenizers/wmt14joint.model --generate_vocabulary < wmt14/tra
 Lastly, we segment the train and test files using the isolated vocabularies.
 
 ```
-spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14en.vocab --extra_options=bos:eos --output_format=piece < wmt14/train.en > wmt14/train_tokenized.en
-spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14de.vocab --extra_options=bos:eos --output_format=piece < wmt14/train.de > wmt14/train_tokenized.de
-spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14en.vocab --extra_options=bos:eos --output_format=piece < wmt14/newstest2013.en > wmt14/test_tokenized.en
-spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14de.vocab --extra_options=bos:eos --output_format=piece < wmt14/newstest2013.de > wmt14/test_tokenized.de
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14en.vocab --extra_options=bos:eos --output_format=piece < wmt14/train.en > wmt14/train_segmented.en
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14de.vocab --extra_options=bos:eos --output_format=piece < wmt14/train.de > wmt14/train_segmented.de
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14en.vocab --extra_options=bos:eos --output_format=piece < wmt14/newstest2013.en > wmt14/test_segmented.en
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14de.vocab --extra_options=bos:eos --output_format=piece < wmt14/newstest2013.de > wmt14/test_segmented.de
 ```
 
 This entire process should take more or less an hour to finish on a sufficiently fast CPU.
@@ -66,10 +66,10 @@ After segmentation, we need to convert each source-target pair in the training a
 
 ```
 python nmt-transformer/preprocess.py \
-    --src_train wmt14/train_tokenized.en \
-    --trg_train wmt14/train_tokenized.de \
-    --src_test wmt14/test_tokenized.en \
-    --trg_test wmt14/test_tokenized.de \
+    --src_train wmt14/train_segmented.en \
+    --trg_train wmt14/train_segmented.de \
+    --src_test wmt14/test_segmented.en \
+    --trg_test wmt14/test_segmented.de \
     --path dataset
 ```
 
@@ -146,30 +146,34 @@ For speedups, 16-bit floating point training is also available through NVIDIA Ap
 For more information on reproduction scores and setups, see [Results and Reproduction Milestones](https://github.com/jcblaisecruz02/nmt-transformer#results-and-reproduction-milestones) below.
 
 # Producing Translations
+
+## Translating single sentences
 To translate a single unsegmented sentence from the source to the target language, the following command may be used:
 
 ```
 python nmt-transformer/translate.py \
     --translate_sentence \
+    --desegment \
     --sentence "Republican leaders justified their policy by the need to combat electoral fraud ." \
     --joint_model tokenizers/wmt14joint.model \
     --joint_vocab tokenizers/wmt14joint.vocab \
     --src_vocab tokenizers/wmt14en.vocab \
     --save_dir base_modelc \
-    --desegment \
     --beams 1 \
     --max_words 50 \
     --msl 100 \
     --seed 42
 ```
 
-Using the model trained in the previous section should give the following output:
+The script will use SentencePiece to segment your sample sentence then use it for translation. Using the model trained in the previous section should give the following output:
 
 ```
 Die republikanischen Führer haben ihre Politik durch die Notwendigkeit , Wahlbetrug zu bekämpfen .
 ```
 
-This requires the input to be Moses tokenized beforehand. By default, the translation script will use greedy decoding (`--beams 1`). To use beam search with a higher beam width N, use `--beams N`. Do note that this will decode N^max_words - 1 tokens (with beam size 2 and max words 30, this is already 1 billion tokens) which is very computationally slow!
+This requires the input to be Moses tokenized beforehand. Using the `--desegment` flag will remove SentencePiece segementation from your sentence. If you want to keep the output sentence segmented for any reason, remove the flag.
+
+By default, the translation script will use greedy decoding (`--beams 1`). To use beam search with a higher beam width N, use `--beams N`. Do note that this will decode N^max_words - 1 tokens (with beam size 2 and max words 30, this is already 1 billion tokens) which is very computationally slow!
 
 To use Top-K/Nucleus sampling, add the following flags:
 
@@ -186,6 +190,7 @@ Adding this to the earlier examples will give us the following translation:
 Die republikanischen Führer haben ihre Politik durch die Notwendigkeit zur Bekämpfung von Wahlbetrug gerechtfertigt .
 ```
 
+## Translating a test file (newstest2013)
 
 We can also translate an entire file (say, for producing translations of the test set). This assumes that the input test file has already been tokenized via Moses and segmented via SentencePiece. To produce translations this way, the following command may be used:
 
@@ -193,7 +198,8 @@ We can also translate an entire file (say, for producing translations of the tes
 python nmt-transformer/translate.py \
     --translate_file \
     --is_segmented \
-    --src_file tokenized_wmt14/test_tokenized.en \
+    --desegment \
+    --src_file tokenized_wmt14/test_segmented.en \
     --output_file output.txt \
     --joint_model tokenizers/wmt14joint.model \
     --joint_vocab tokenizers/wmt14joint.vocab \
@@ -209,7 +215,7 @@ python nmt-transformer/translate.py \
     --seed 42
 ```
 
-This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. If your input file has not been segmented by SentencePiece yet, remove the `--desegment` toggle from the command line arguments (do note that this will increase the translation time by 3x). I highly encourage the use of `--use_cuda` during translation to speed up the process.
+This should produce a translation of the WMT14 Test set (newstest2013) in about 10 minutes. This example assumes that your test set is already segmented (like we did earlier). If it is not segmented yet, remove the `--is_segmented` flag. The script will segment your sentences via SentencePiece on the fly (do note that this will increase the translation time by 3x). I highly encourage the use of `--use_cuda` during translation to speed up the process.
 
 The translation script will use the non-averaged saved model by default. To use the averaged model, use the following flag:
 
@@ -220,7 +226,7 @@ python nmt-transformer/translate.py \
     --use_swa
 ```
 
-To get a Detokenized BLEU score of the output translations, use the following script:
+We provide a script to compute for detokenized BLEU. This takes the unsegmented, Moses-tokenized translation and reference files:
 
 ```
 python nmt-transformer/bleu.py \
@@ -237,6 +243,53 @@ BLEU: 20.85
 
 This is 2.85 BLEU points lower than the reported test BLEU for the same model in the paper (23.7 BLEU).
 
+## Translating your own test files (newstest2014 example)
+
+For using your own test sets, the process is simple. You'll need to get a source and reference test set, tokenize them via Moses, segment them via SentencePiece, produce translations, then score via BLEU. Here's an example for Newstest2014.
+
+We first download Newstest2014 via SacreBLEU's utility tool.
+
+```
+sacrebleu -t wmt14 -l en-de --echo ref > newstest2014.de
+sacrebleu -t wmt14 -l en-de --echo src > newstest2014.en
+```
+
+Next, we'll have to tokenize this via Moses. Here's an example for simple Moses tokenization (you can always use your own):
+
+```python
+from sacremoses import MosesTokenizer
+src_tok, tgt_tok = MosesTokenizer(lang='en'), MosesTokenizer(lang='de')
+
+with open('newstest2014_tokenized.en', 'w') as out:
+    with open('newstest2014.en', 'r') as inp:
+        for line in inp:
+            line = ' '.join(src_tok.tokenize(line.strip()))
+            line = line.replace('-', ' ##AT##-##AT## ')
+            out.write(line + '\n')
+
+with open('newstest2014_tokenized.de', 'w') as out:
+    with open('newstest2014.de', 'r') as inp:
+        for line in inp:
+            line = ' '.join(tgt_tok.tokenize(line.strip()))
+            line = line.replace('-', ' ##AT##-##AT## ')
+            out.write(line + '\n')
+```
+
+We'll segment the data using the SentencePiece models we made earlier.
+
+```
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14en.vocab \
+            --extra_options=bos:eos --output_format=piece < newstest2014_tokenized.en > newstest2014_segmented.en
+spm_encode --model=tokenizers/wmt14joint.model --vocabulary=tokenizers/wmt14de.vocab \
+            --extra_options=bos:eos --output_format=piece < newstest2014_tokenized.de > newstest2014_segmented.de
+```
+
+Use the `translate.py` script to produce translations, then score using BLEU via the `bleu.py` script. Using the same parameters for sampling as above will give us the following score:
+
+```
+BLEU: 23.13
+```
+
 # Results and Reproduction Milestones
 
 Since our goal is to reproduce the results with just one GPU instead of the eight that the authors used, some considerations for the hyperparameters will be made:
@@ -252,7 +305,6 @@ Here is a table describing the current reproduction scores and progress:
 |-------|---------------------------------|--------------------|----------------------|--------------------|-----------------------|--------------------|
 | Base  | `N=6`, `d_model=512`, `dff=2014`, `h=8` |  |  |  |  | In progress |
 | C     | `N=2`        | :white_check_mark: 6.89 PPL| -0.78 | :arrows_counterclockwise: 20.85 BLEU | -2.85 | BLEU results using nucleus sampling. Uses positional embeddings. |
-| Notes | *\*Uses the same settings as the base model unless specified* | | *\*Lower PPL is better* | | *\*Higher BLEU is better* | |
 
 To reproduce the results in the table, the commands used to train and translate the models are indicated below.
 
